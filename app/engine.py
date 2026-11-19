@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 
 from .jobs import (
@@ -17,6 +18,7 @@ from .jobs import (
 )
 from .manifest import FLOAT32_BYTES, Manifest, load_manifest
 from .plans import CopyOp, plan_copy_ops, rank_intervals
+from .readgate import ReadGate
 
 DEFAULT_CHUNK_BYTES = 4 * 1024 * 1024  # 4 MiB
 
@@ -25,7 +27,13 @@ class SourceChangedError(RuntimeError):
     """The source checkpoint no longer matches the one the job was planned from."""
 
 
-def _copy_ops_to_file(source_dir: Path, ops: list[CopyOp], dst: Path, chunk_bytes: int) -> None:
+def _copy_ops_to_file(
+    source_dir: Path,
+    ops: list[CopyOp],
+    dst: Path,
+    chunk_bytes: int,
+    gate: ReadGate | None,
+) -> None:
     """Stream the given source ranges into ``dst`` via a temp file + atomic rename."""
     tmp = dst.with_name(dst.name + ".tmp")
     if tmp.exists():
@@ -39,8 +47,13 @@ def _copy_ops_to_file(source_dir: Path, ops: list[CopyOp], dst: Path, chunk_byte
                 with open(src, "rb", buffering=0) as fh:
                     while remaining > 0:
                         # pread with an explicit offset keeps every read
-                        # positioned regardless of file-object state.
-                        data = os.pread(fh.fileno(), min(chunk_bytes, remaining), offset)
+                        # positioned regardless of file-object state.  Each
+                        # chunk read holds one shared gate slot (released even
+                        # if the read fails); reshard reads get priority over
+                        # diagnose reads when slots are scarce.
+                        slot = gate.slot("reshard") if gate is not None else nullcontext()
+                        with slot:
+                            data = os.pread(fh.fileno(), min(chunk_bytes, remaining), offset)
                         if not data:
                             raise IOError(
                                 f"short read on {op.path} at byte {offset}: "
@@ -85,12 +98,18 @@ def _verify_source_unchanged(job: Job, manifest: Manifest) -> None:
         )
 
 
-def execute_job(store: JobStore, job: Job, chunk_bytes: int = DEFAULT_CHUNK_BYTES) -> Job:
+def execute_job(
+    store: JobStore,
+    job: Job,
+    chunk_bytes: int = DEFAULT_CHUNK_BYTES,
+    gate: ReadGate | None = None,
+) -> Job:
     """Run/resume a job synchronously.
 
     Shards that are already fully on disk (marker + exact sizes) are reused
     untouched; only incomplete shards are (re)written.  Progress is persisted
-    after every shard, so a crash leaves a resumable state.
+    after every shard, so a crash leaves a resumable state.  When ``gate`` is
+    given, every chunk read takes one shared read slot (reshard priority).
     """
     job.status = "running"
     job.error = None
@@ -121,7 +140,7 @@ def execute_job(store: JobStore, job: Job, chunk_bytes: int = DEFAULT_CHUNK_BYTE
                 (manifest.momentum, MOMENTUM_NAME),
             ):
                 ops = plan_copy_ops(segments, start, end)
-                _copy_ops_to_file(source_dir, ops, rank_dir / name, chunk_bytes)
+                _copy_ops_to_file(source_dir, ops, rank_dir / name, chunk_bytes, gate)
             _write_shard_meta(rank_dir, rank_state.rank, start, end, job.step)
             rank_state.status = "done"
             store.save(job)  # persist progress after each shard

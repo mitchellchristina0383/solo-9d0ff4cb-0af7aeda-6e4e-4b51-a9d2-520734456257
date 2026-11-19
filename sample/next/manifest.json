@@ -1,0 +1,43 @@
+{
+  "step": 7460,
+  "total_length": 10007,
+  "weights": [
+    {
+      "path": "weights/part-0.f32",
+      "start": 0,
+      "end": 4000
+    },
+    {
+      "path": "weights/part-1.f32",
+      "start": 4000,
+      "end": 8000
+    },
+    {
+      "path": "weights/part-2.f32",
+      "start": 8000,
+      "end": 10007
+    }
+  ],
+  "momentum": [
+    {
+      "path": "momentum/part-0.f32",
+      "start": 0,
+      "end": 1500
+    },
+    {
+      "path": "momentum/part-1.f32",
+      "start": 1500,
+      "end": 6000
+    },
+    {
+      "path": "momentum/part-2.f32",
+      "start": 6000,
+      "end": 9500
+    },
+    {
+      "path": "momentum/part-3.f32",
+      "start": 9500,
+      "end": 10007
+    }
+  ]
+}

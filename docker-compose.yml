@@ -5,10 +5,13 @@ services:
       - "8000:8000"
     environment:
       SOURCE_DIR: /data/source
+      NEXT_DIR: /data/next
       OUTPUT_ROOT: /data/outputs
-      # CHUNK_BYTES: "4194304"        # copy chunk size, default 4 MiB
+      # CHUNK_BYTES: "4194304"        # copy/scan chunk size, default 4 MiB
+      # READ_CONCURRENCY: "4"         # chunk-read slots shared by reshard + diagnose
       # RESHARD_SYNC: "false"         # "true" runs jobs inline (debug/tests)
     volumes:
-      - ./sample/source:/data/source:ro   # read-only source checkpoint volume
+      - ./sample/source:/data/source:ro   # read-only earlier checkpoint (step 7459)
+      - ./sample/next:/data/next:ro       # read-only later checkpoint (step 7460, NaN/Inf injected)
       - ./outputs:/data/outputs           # resharded shards + job state
     restart: unless-stopped
